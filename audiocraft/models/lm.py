@@ -217,49 +217,40 @@ class LMModel(StreamingModule):
     def num_codebooks(self) -> int:
         return self.n_q
 
-    def forward(self, sequence: torch.Tensor,
-                conditions: tp.List[ConditioningAttributes],
-                condition_tensors: tp.Optional[ConditionTensors] = None) -> torch.Tensor:
-        """Apply language model on sequence and conditions.
-        Given a tensor of sequence of shape [B, K, S] with K the number of codebooks and
-        S the sequence steps, return the logits with shape [B, card, K, S].
-
-        Args:
-            indices (torch.Tensor): indices of the codes to model.
-            conditions (list[ConditioningAttributes]): conditionings to use when modeling
-                the given codes. Note that when evaluating multiple time with the same conditioning
-                you should pre-compute those and pass them as `condition_tensors`.
-            condition_tensors (dict[str, ConditionType] or None): pre-computed conditioning
-                tensors, see `conditions`.
-        Returns:
-            torch.Tensor: Logits.
-        """
-        B, K, S = sequence.shape
-        assert K == self.num_codebooks, 'Sequence shape must match the specified number of codebooks'
-        input_ = sum([self.emb[k](sequence[:, k]) for k in range(K)])
-        if condition_tensors is None:
-            assert not self._is_streaming, "Conditions tensors should be precomputed when streaming."
-            # apply dropout modules
-            conditions = self.cfg_dropout(conditions)
-            conditions = self.att_dropout(conditions)
-            tokenized = self.condition_provider.tokenize(conditions)
-            # encode conditions and fuse, both have a streaming cache to not recompute when generating.
-            condition_tensors = self.condition_provider(tokenized)
+    def forward(self, sequence: torch.Tensor,  
+            conditions: tp.List[ConditioningAttributes],  
+            condition_tensors: tp.Optional[ConditionTensors] = None,
+            external_logits: tp.Optional[torch.Tensor] = None) -> torch.Tensor:  
+        """Apply language model on sequence and conditions."""  
+        B, K, S = sequence.shape  
+        assert K == self.num_codebooks, 'Sequence shape must match the specified number of codebooks'  
+        input_ = sum([self.emb[k](sequence[:, k]) for k in range(K)])  
+        if condition_tensors is None:  
+            assert not self._is_streaming, "Conditions tensors should be precomputed when streaming."  
+            conditions = self.cfg_dropout(conditions)  
+            conditions = self.att_dropout(conditions)  
+            tokenized = self.condition_provider.tokenize(conditions)  
+            condition_tensors = self.condition_provider(tokenized)  
+        else:  
+            assert not conditions, "Shouldn't pass both conditions and condition_tensors."  
+            
+        input_, cross_attention_input = self.fuser(input_, condition_tensors)  
+        
+        # if external logits are provided, use them instead of running the transformer
+        if external_logits is not None:
+            out = external_logits
         else:
-            assert not conditions, "Shouldn't pass both conditions and condition_tensors."
-
-        input_, cross_attention_input = self.fuser(input_, condition_tensors)
-
-        out = self.transformer(input_, cross_attention_src=cross_attention_input)
-        if self.out_norm:
-            out = self.out_norm(out)
-        logits = torch.stack([self.linears[k](out) for k in range(K)], dim=1)  # [B, K, S, card]
-
-        # remove the prefix from the model outputs
-        if len(self.fuser.fuse2cond['prepend']) > 0:
-            logits = logits[:, :, -S:]
-
-        return logits  # [B, K, S, card]
+            out = self.transformer(input_, cross_attention_src=cross_attention_input)  
+        
+        if self.out_norm:  
+            out = self.out_norm(out)  
+        
+        logits = torch.stack([self.linears[k](out) for k in range(K)], dim=1) # [B, K, S, card]  
+        
+        if len(self.fuser.fuse2cond['prepend']) > 0:  
+            logits = logits[:, :, -S:]  
+        
+        return logits # [B, K, S, card]
 
     def compute_predictions(
             self, codes: torch.Tensor,
@@ -314,7 +305,8 @@ class LMModel(StreamingModule):
                            temp: float = 1.0,
                            top_k: int = 0,
                            top_p: float = 0.0,
-                           cfg_coef: tp.Optional[float] = None) -> torch.Tensor:
+                           cfg_coef: tp.Optional[float] = None,
+                           external_logits: tp.Optional[torch.Tensor] = None) -> torch.Tensor:
         """Sample next token from the model given a sequence and a set of conditions. The model supports
         multiple sampling strategies (greedy sampling, softmax, top-k, top-p...).
 
@@ -338,10 +330,10 @@ class LMModel(StreamingModule):
         if self.two_step_cfg and cfg_conditions != {}:
             assert isinstance(cfg_conditions, tuple)
             condition_tensors, null_condition_tensors = cfg_conditions
-            cond_logits = model(sequence, conditions=[], condition_tensors=condition_tensors)
+            cond_logits = model(sequence, conditions=[], condition_tensors=condition_tensors, external_logits=external_logits if external_logits is not None else None)
             state = self.get_streaming_state()
             self.set_streaming_state(unconditional_state)
-            uncond_logits = model(sequence, conditions=[], condition_tensors=null_condition_tensors)
+            uncond_logits = model(sequence, conditions=[], condition_tensors=null_condition_tensors, external_logits=external_logits if external_logits is not None else None)
             unconditional_state.update(self.get_streaming_state())
             self.set_streaming_state(state)
             logits = uncond_logits + (cond_logits - uncond_logits) * self.cfg_coef
@@ -353,7 +345,7 @@ class LMModel(StreamingModule):
                 sequence = torch.cat([sequence, sequence], dim=0)
             all_logits = model(
                 sequence,
-                conditions=[], condition_tensors=condition_tensors)
+                conditions=[], condition_tensors=condition_tensors, external_logits=external_logits if external_logits is not None else None)
             if condition_tensors:
                 cond_logits, uncond_logits = all_logits.split(B, dim=0)  # [B, K, T, card]
                 logits = uncond_logits + (cond_logits - uncond_logits) * cfg_coef
@@ -391,7 +383,8 @@ class LMModel(StreamingModule):
                  two_step_cfg: bool = False,
                  remove_prompts: bool = False,
                  check: bool = False,
-                 callback: tp.Optional[tp.Callable[[int, int], None]] = None) -> torch.Tensor:
+                 callback: tp.Optional[tp.Callable[[int, int], None]] = None,
+                 external_logits: tp.Optional[torch.Tensor] = None) -> torch.Tensor:
         """Generate tokens sampling from the model given a prompt or unconditionally. Generation can
         be perform in a greedy fashion or using sampling with top K and top P strategies.
 
@@ -489,7 +482,7 @@ class LMModel(StreamingModule):
                 # sample next token from the model, next token shape is [B, K, 1]
                 next_token = self._sample_next_token(
                     curr_sequence, cfg_conditions, unconditional_state, use_sampling, temp, top_k, top_p,
-                    cfg_coef=cfg_coef)
+                    cfg_coef=cfg_coef, external_logits=external_logits if external_logits is not None else None)
                 # ensure the tokens that should be masked are properly set to special_token_id
                 # as the model never output special_token_id
                 valid_mask = mask[..., offset:offset+1].expand(B, -1, -1)
