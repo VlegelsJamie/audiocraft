@@ -150,7 +150,7 @@ class MusicGen:
         attributes, prompt_tokens = self._prepare_tokens_and_attributes(descriptions, None)
         return self._generate_tokens(attributes, prompt_tokens, progress)
 
-    def generate(self, descriptions: tp.List[str], progress: bool = False) -> torch.Tensor:
+    def generate(self, descriptions: tp.List[str], progress: bool = False, external_logits: tp.Optional[torch.Tensor] = None) -> torch.Tensor:
         """Generate samples conditioned on text.
 
         Args:
@@ -159,7 +159,7 @@ class MusicGen:
         """
         attributes, prompt_tokens = self._prepare_tokens_and_attributes(descriptions, None)
         assert prompt_tokens is None
-        return self._generate_tokens(attributes, prompt_tokens, progress)
+        return self._generate_tokens(attributes, prompt_tokens, progress, external_logits=external_logits if external_logits is not None else None)
 
     def generate_with_chroma(self, descriptions: tp.List[str], melody_wavs: MelodyType,
                              melody_sample_rate: int, progress: bool = False) -> torch.Tensor:
