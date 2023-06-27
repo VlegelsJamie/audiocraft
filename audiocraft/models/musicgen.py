@@ -307,7 +307,7 @@ class MusicGen:
             with self.autocast:
                 gen_tokens = self.lm.generate(
                     prompt_tokens, attributes,
-                    callback=callback, max_gen_len=total_gen_len, **self.generation_params)
+                    callback=callback, max_gen_len=total_gen_len, external_logits=external_logits if external_logits is not None else None, **self.generation_params)
 
         else:
             # now this gets a bit messier, we need to handle prompts,
