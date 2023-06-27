@@ -241,8 +241,6 @@ class LMModel(StreamingModule):
             out = external_logits
         else:
             out = self.transformer(input_, cross_attention_src=cross_attention_input)  
-
-        print(f"transformer: {out}")
         
         if self.out_norm:  
             out = self.out_norm(out)  
@@ -348,7 +346,7 @@ class LMModel(StreamingModule):
             all_logits = model(
                 sequence,
                 conditions=[], condition_tensors=condition_tensors, external_logits=external_logits if external_logits is not None else None)
-            print(f"All logits: {all_logits}")
+            
             if condition_tensors:
                 cond_logits, uncond_logits = all_logits.split(B, dim=0)  # [B, K, T, card]
                 logits = uncond_logits + (cond_logits - uncond_logits) * cfg_coef
