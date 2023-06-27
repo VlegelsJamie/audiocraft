@@ -271,7 +271,7 @@ class MusicGen:
         return attributes, prompt_tokens
 
     def _generate_tokens(self, attributes: tp.List[ConditioningAttributes],
-                         prompt_tokens: tp.Optional[torch.Tensor], progress: bool = False) -> torch.Tensor:
+                         prompt_tokens: tp.Optional[torch.Tensor], progress: bool = False, external_logits: tp.Optional[torch.Tensor] = None) -> torch.Tensor:
         """Generate discrete audio tokens given audio prompt and/or conditions.
 
         Args:
