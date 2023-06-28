@@ -473,7 +473,7 @@ class LMModel(StreamingModule):
             gen_sequence_len = gen_sequence.shape[-1]  # gen_sequence shape is [B, K, S]
             print(gen_sequence_len)
             print(start_offset_sequence)
-            for i, offset in zip(range(0, gen_sequence_len), range(start_offset_sequence, gen_sequence_len)):
+            for i, offset in zip(range(0, gen_sequence_len - start_offset_sequence), range(start_offset_sequence, gen_sequence_len)):
                 # get current sequence (note that the streaming API is providing the caching over previous offsets)
                 curr_sequence = gen_sequence[..., prev_offset:offset]
                 curr_mask = mask[None, ..., prev_offset:offset].expand(B, -1, -1)
