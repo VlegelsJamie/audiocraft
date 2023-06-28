@@ -473,7 +473,7 @@ class LMModel(StreamingModule):
             gen_sequence_len = gen_sequence.shape[-1]  # gen_sequence shape is [B, K, S]
             print(gen_sequence_len)
             print(start_offset_sequence)
-            for offset in range(start_offset_sequence, gen_sequence_len):
+            for i, offset in enumerate(start_offset_sequence, gen_sequence_len):
                 # get current sequence (note that the streaming API is providing the caching over previous offsets)
                 curr_sequence = gen_sequence[..., prev_offset:offset]
                 curr_mask = mask[None, ..., prev_offset:offset].expand(B, -1, -1)
@@ -485,7 +485,7 @@ class LMModel(StreamingModule):
                 # sample next token from the model, next token shape is [B, K, 1]
                 next_token = self._sample_next_token(
                     curr_sequence, cfg_conditions, unconditional_state, use_sampling, temp, top_k, top_p,
-                    cfg_coef=cfg_coef, external_logits=external_logits[offset] if external_logits is not None else None)
+                    cfg_coef=cfg_coef, external_logits=external_logits[i] if external_logits is not None else None)
                 # ensure the tokens that should be masked are properly set to special_token_id
                 # as the model never output special_token_id
                 valid_mask = mask[..., offset:offset+1].expand(B, -1, -1)
